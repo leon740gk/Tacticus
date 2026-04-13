@@ -3,8 +3,7 @@ import json
 import os
 import re
 
-DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1493246196410617856/7cyidpEhXW3uMWfpElM0w7v_k7EL6QePVebq1-Sn0CSyNT7GulSbKNWpg_HR7cXucwA4"
-
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
 POSTED_CODES_FILE = "posted_codes.json"
 
 
