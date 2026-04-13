@@ -3,10 +3,13 @@ name: Tacticus Codes Bot
 on:
   schedule:
     - cron: "0 */2 * * *"  # every 2 hours
-  workflow_dispatch:       # allow manual run
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  run:
+  run-bot:
     runs-on: ubuntu-latest
 
     steps:
@@ -14,12 +17,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: 3.11
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests beautifulsoup4
 
       - name: Run bot
         env:
@@ -28,8 +31,10 @@ jobs:
 
       - name: Commit updated codes
         run: |
-          git config user.name "bot"
-          git config user.email "bot@github.com"
-          git add codes.json
-          git commit -m "Update codes" || echo "No changes"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions@github.com"
+
+          git add posted_codes.json || true
+          git commit -m "Update posted codes" || echo "No changes"
+
           git push

@@ -2,49 +2,125 @@ import requests
 import json
 import os
 import re
-from datetime import datetime
 
-API_URL = "https://tacticus.wiki.gg/api.php"
-WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
+DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1493246196410617856/7cyidpEhXW3uMWfpElM0w7v_k7EL6QePVebq1-Sn0CSyNT7GulSbKNWpg_HR7cXucwA4"
+
+POSTED_CODES_FILE = "posted_codes.json"
 
 
-# -------------------------
-# CLEAN TEXT (wiki cleanup)
-# -------------------------
+# =========================
+# LOAD / SAVE POSTED CODES
+# =========================
+def load_posted_codes():
+    if not os.path.exists(POSTED_CODES_FILE):
+        return set()
+
+    with open(POSTED_CODES_FILE, "r") as f:
+        return set(json.load(f))
+
+
+def save_posted_codes(codes):
+    with open(POSTED_CODES_FILE, "w") as f:
+        json.dump(list(codes), f, indent=2)
+
+
+# =========================
+# CLEAN TEXT (remove [[ ]])
+# =========================
 def clean_text(text):
-    text = re.sub(r"'{2,}", "", text)  # bold/italic
-    text = re.sub(r"\[\[[^|\]]+\|([^\]]+)\]\]", r"\1", text)  # [[Page|Name]]
-    text = re.sub(r"\[\[([^\]]+)\]\]", r"\1", text)  # [[Page]]
-    text = re.sub(r"\s+", " ", text)  # normalize spaces
-    return text.strip()
+    return re.sub(r"\[\[(.*?)\]\]", r"\1", text)
 
 
-# -------------------------
-# FETCH CODES FROM API
-# -------------------------
-def fetch_codes():
-    params = {
-        "action": "parse",
-        "page": "Active_Codes",
-        "format": "json",
-        "prop": "wikitext"
-    }
+# =========================
+# FORMAT REWARDS (CODEX)
+# =========================
+def format_reward(rewards):
+    parts = []
 
-    response = requests.get(API_URL, params=params)
+    for r in rewards:
+        name = r.get("name", "")
+        r_type = r.get("type", "")
+        qty = r.get("quantity", 0)
+
+        if r_type == "energy":
+            emoji = "⚡"
+            label = "Energy"
+        elif r_type == "gold":
+            emoji = "💰"
+            label = "Gold"
+        elif r_type == "blackstone":
+            emoji = "💎"
+            label = "Blackstone"
+        elif r_type == "shards":
+            emoji = "🧬"
+            label = f"{name.title()} Shards"
+        elif r_type == "ammo":
+            emoji = "🔫"
+            label = "Ammo"
+        elif r_type == "upgrade":
+            emoji = "🛠️"
+            label = name.title()
+        else:
+            emoji = "🎁"
+            label = name.title()
+
+        parts.append(f"{emoji} {qty} {label}")
+
+    return ", ".join(parts)
+
+
+# =========================
+# FETCH FROM CODEX API (PRIMARY)
+# =========================
+def fetch_codes_codex():
+    url = "https://api.tacticuscodex.com/api/gamecode"
+
+    response = requests.get(url)
     data = response.json()
-
-    text = data["parse"]["wikitext"]["*"]
 
     codes = {}
 
-    for line in text.split("\n"):
-        line = line.strip()
+    # sort newest first
+    items = sorted(
+        data.get("gameCodes", []),
+        key=lambda x: x.get("postedDate", ""),
+        reverse=True
+    )
 
-        if " - " in line:
-            parts = line.split(" - ", 1)
+    for item in items:
+        if not item.get("isActive", True):
+            continue
 
-            code = clean_text(parts[0].replace("*", "").strip())
-            reward = clean_text(parts[1])
+        code = item.get("code", "").strip().upper()
+        rewards = item.get("rewards", [])
+
+        if code:
+            reward_text = format_reward(rewards)
+            codes[code] = reward_text
+
+    return codes
+
+
+# =========================
+# FETCH FROM WIKI (FALLBACK)
+# =========================
+def fetch_codes_wiki():
+    url = "https://tacticus.fandom.com/wiki/Redemption_Codes"
+
+    html = requests.get(url).text
+
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+
+    codes = {}
+
+    for li in soup.select("li"):
+        text = clean_text(li.get_text())
+
+        if "-" in text:
+            parts = text.split("-", 1)
+            code = parts[0].strip().upper()
+            reward = parts[1].strip()
 
             if code.isupper():
                 codes[code] = reward
@@ -52,89 +128,61 @@ def fetch_codes():
     return codes
 
 
-# -------------------------
-# LOAD / SAVE
-# -------------------------
-def load_saved_codes():
-    if not os.path.exists("codes.json"):
-        return {}
-
-    with open("codes.json", "r") as f:
-        return json.load(f)
-
-
-def save_codes(codes):
-    with open("codes.json", "w") as f:
-        json.dump(codes, f, indent=2)
-
-
-# -------------------------
-# SPLIT LONG MESSAGE
-# -------------------------
-def split_message(text, limit=2000):
-    parts = []
-    while len(text) > limit:
-        split_at = text.rfind("\n", 0, limit)
-        if split_at == -1:
-            split_at = limit
-        parts.append(text[:split_at])
-        text = text[split_at:]
-    parts.append(text)
-    return parts
-
-
-# -------------------------
+# =========================
 # SEND TO DISCORD
-# -------------------------
-def send_grouped_to_discord(new_codes):
-    if not new_codes:
+# =========================
+def send_to_discord(message):
+    if not DISCORD_WEBHOOK:
+        print("❌ DISCORD_WEBHOOK is not set!")
         return
 
-    # sort codes alphabetically (stable)
-    sorted_codes = dict(sorted(new_codes.items()))
+    chunks = [message[i:i+1900] for i in range(0, len(message), 1900)]
 
-    description = ""
-    for code, reward in sorted_codes.items():
-        description += f"🔹 **{code}**\n{reward}\n\n"
+    for chunk in chunks:
+        response = requests.post(DISCORD_WEBHOOK, json={"content": chunk})
+        print("Discord status:", response.status_code)
 
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-
-    embed = {
-        "title": "New Tacticus Codes",
-        "description": description,
-        "color": 5814783,
-        "footer": {"text": f"Updated: {timestamp}"}
-    }
-
-    data = {
-        "embeds": [embed]
-    }
-
-    # handle Discord message length limit
-    messages = split_message(description)
-
-    for msg in messages:
-        embed["description"] = msg
-        requests.post(WEBHOOK_URL, json=data)
+        if response.status_code != 204:
+            print("Error:", response.text)
 
 
-# -------------------------
-# MAIN LOGIC
-# -------------------------
+# =========================
+# MAIN
+# =========================
 def main():
-    current_codes = fetch_codes()
-    saved_codes = load_saved_codes()
+    posted_codes = load_posted_codes()
+
+    codex_codes = fetch_codes_codex()
+    wiki_codes = fetch_codes_wiki()
+
+    # merge (codex primary, wiki fallback)
+    all_codes = {**wiki_codes, **codex_codes}
 
     new_codes = {
         code: reward
-        for code, reward in current_codes.items()
-        if code not in saved_codes
+        for code, reward in all_codes.items()
+        if code not in posted_codes
     }
 
-    if new_codes:
-        send_grouped_to_discord(new_codes)
+    if not new_codes:
+        print("No new codes.")
+        return
 
-    save_codes(current_codes)
+    # build ONE message
+    lines = []
+
+    for code, reward in new_codes.items():
+        lines.append(f"🔹 **{code}**\n{reward}")
+
+    message = "\n\n".join(lines)
+
+    send_to_discord(message)
+
+    # update storage
+    posted_codes.update(new_codes.keys())
+    save_posted_codes(posted_codes)
+
+    print(f"Posted {len(new_codes)} new codes.")
 
 
 if __name__ == "__main__":
