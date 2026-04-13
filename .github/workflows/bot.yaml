@@ -1,0 +1,35 @@
+name: Tacticus Codes Bot
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"  # every 2 hours
+  workflow_dispatch:       # allow manual run
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 cloudscraper
+
+      - name: Run bot
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: python main.py
+
+      - name: Commit updated codes
+        run: |
+          git config user.name "bot"
+          git config user.email "bot@github.com"
+          git add codes.json
+          git commit -m "Update codes" || echo "No changes"
+          git push
